@@ -30,7 +30,7 @@ const FALLBACK_RESPONSE: DecisionResult = {
 };
 
 export const runtime = "nodejs";
-export const maxDuration = 10;
+export const maxDuration = 30;
 
 function methodNotAllowed() {
   return NextResponse.json({ error: "Method not allowed." }, { status: 405 });
@@ -90,8 +90,11 @@ async function callGemini(prompt: string) {
     config: {
       temperature: 0.4,
       topP: 0.9,
-      maxOutputTokens: 512,
+      maxOutputTokens: 2048,
       responseMimeType: "application/json",
+      thinkingConfig: {
+        thinkingBudget: 0,
+      },
     },
   });
 
