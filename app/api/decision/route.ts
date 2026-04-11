@@ -19,7 +19,7 @@ const MODE_BEHAVIOR: Record<Mode, string> = {
   brutal: "Use concise, direct, blunt reasoning.",
 };
 
-const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_MODEL = "gemini-2.5-flash-preview-04-17";
 
 const FALLBACK_RESPONSE: DecisionResult = {
   pros: ["Unable to analyze at this time."],
@@ -101,7 +101,6 @@ async function callGemini(prompt: string) {
       topP: 0.9,
       maxOutputTokens: 2048,
       responseMimeType: "application/json",
-      thinkingConfig: { thinkingBudget: 0 },
       safetySettings: SAFETY_SETTINGS,
     },
   });
