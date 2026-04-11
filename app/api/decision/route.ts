@@ -87,8 +87,8 @@ function parseDecisionResult(rawText: string): DecisionResult {
 async function callGemini(prompt: string) {
   const apiKey = process.env.GEMINI_API_KEY;
 
-  if (!apiKey) {
-    throw new Error("Missing GEMINI_API_KEY.");
+  if (!apiKey || apiKey.trim() === "" || apiKey === "AI") {
+    throw new Error("INVALID_KEY: GEMINI_API_KEY is missing or is still the placeholder value. Set a real key in Vercel → Settings → Environment Variables.");
   }
 
   const controller = new AbortController();
@@ -180,11 +180,8 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
 
-    if (message.includes("Missing GEMINI_API_KEY")) {
-      return NextResponse.json(
-        { error: "API key not configured. Please set GEMINI_API_KEY in your Vercel environment variables." },
-        { status: 500 }
-      );
+    if (message.includes("INVALID_KEY")) {
+      return NextResponse.json({ error: message }, { status: 500 });
     }
 
     if (message.startsWith("BLOCKED:")) {
@@ -201,9 +198,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Surface the real error in the UI so it's always visible for debugging
     console.error("Gemini request failed:", message);
     return NextResponse.json(
-      { error: "Failed to reach the AI service. Please try again." },
+      { error: `Service error: ${message}` },
       { status: 500 }
     );
   }
