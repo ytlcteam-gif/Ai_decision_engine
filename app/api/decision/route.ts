@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 
 type Mode = "logical" | "emotional" | "brutal";
 
@@ -28,6 +28,15 @@ const FALLBACK_RESPONSE: DecisionResult = {
   decision: "Could not generate a decision. Please retry.",
   confidence: "0%",
 };
+
+// All safety categories set to BLOCK_ONLY_HIGH to prevent accidental blocks
+// on everyday dilemma questions (jobs, relationships, life choices, etc.)
+const SAFETY_SETTINGS = [
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT,       threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,      threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+];
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -84,7 +93,7 @@ async function callGemini(prompt: string) {
 
   const ai = new GoogleGenAI({ apiKey });
 
-  const response = await ai.models.generateContent({
+  const result = await ai.models.generateContent({
     model: GEMINI_MODEL,
     contents: prompt,
     config: {
@@ -92,15 +101,31 @@ async function callGemini(prompt: string) {
       topP: 0.9,
       maxOutputTokens: 2048,
       responseMimeType: "application/json",
-      thinkingConfig: {
-        thinkingBudget: 0,
-      },
+      thinkingConfig: { thinkingBudget: 0 },
+      safetySettings: SAFETY_SETTINGS,
     },
   });
 
-  const rawText = response.text ?? "";
+  // Raw log so we can see the full Gemini response in Vercel logs if something goes wrong
+  console.log("Raw Gemini response:", JSON.stringify(result));
 
-  if (!rawText) {
+  // Validate that Gemini returned actual content and wasn't blocked
+  const candidates = result.candidates;
+  if (!candidates || candidates.length === 0) {
+    throw new Error("Gemini returned no candidates — response may have been blocked.");
+  }
+
+  const firstCandidate = candidates[0];
+  const finishReason = firstCandidate.finishReason;
+
+  // If Gemini stopped due to safety filters, return a friendly message
+  if (finishReason === "SAFETY" || finishReason === "RECITATION") {
+    throw new Error(`BLOCKED:${finishReason}`);
+  }
+
+  const rawText = result.text ?? "";
+
+  if (!rawText.trim()) {
     throw new Error("Gemini returned an empty response.");
   }
 
@@ -143,6 +168,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: "API key not configured. Please set GEMINI_API_KEY in your environment variables." },
         { status: 500 }
+      );
+    }
+
+    if (message.startsWith("BLOCKED:")) {
+      return NextResponse.json(
+        { error: "The AI declined to answer this specific dilemma. Try rephrasing it!" },
+        { status: 422 }
+      );
+    }
+
+    if (message.includes("no candidates")) {
+      return NextResponse.json(
+        { error: "The AI declined to answer this specific dilemma. Try rephrasing it!" },
+        { status: 422 }
       );
     }
 
