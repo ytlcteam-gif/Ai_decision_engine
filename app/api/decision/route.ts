@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 
 type Mode = "logical" | "emotional" | "brutal";
 
@@ -19,7 +18,16 @@ const MODE_BEHAVIOR: Record<Mode, string> = {
   brutal: "Use concise, direct, blunt reasoning.",
 };
 
-const GEMINI_MODEL = "gemini-2.5-flash-preview-04-17";
+// gemini-2.0-flash: fast (~1-3s), stable, works within Vercel Hobby 10s limit
+const GEMINI_MODEL = "gemini-2.0-flash";
+const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+
+const SAFETY_SETTINGS = [
+  { category: "HARM_CATEGORY_HARASSMENT",        threshold: "BLOCK_ONLY_HIGH" },
+  { category: "HARM_CATEGORY_HATE_SPEECH",        threshold: "BLOCK_ONLY_HIGH" },
+  { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",  threshold: "BLOCK_ONLY_HIGH" },
+  { category: "HARM_CATEGORY_DANGEROUS_CONTENT",  threshold: "BLOCK_ONLY_HIGH" },
+];
 
 const FALLBACK_RESPONSE: DecisionResult = {
   pros: ["Unable to analyze at this time."],
@@ -29,17 +37,9 @@ const FALLBACK_RESPONSE: DecisionResult = {
   confidence: "0%",
 };
 
-// All safety categories set to BLOCK_ONLY_HIGH to prevent accidental blocks
-// on everyday dilemma questions (jobs, relationships, life choices, etc.)
-const SAFETY_SETTINGS = [
-  { category: HarmCategory.HARM_CATEGORY_HARASSMENT,       threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,      threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-];
-
+// Hobby plan hard limit is 10s — keep under that
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 10;
 
 function methodNotAllowed() {
   return NextResponse.json({ error: "Method not allowed." }, { status: 405 });
@@ -91,44 +91,61 @@ async function callGemini(prompt: string) {
     throw new Error("Missing GEMINI_API_KEY.");
   }
 
-  const ai = new GoogleGenAI({ apiKey });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s to stay under 10s Hobby limit
 
-  const result = await ai.models.generateContent({
-    model: GEMINI_MODEL,
-    contents: prompt,
-    config: {
-      temperature: 0.4,
-      topP: 0.9,
-      maxOutputTokens: 2048,
-      responseMimeType: "application/json",
-      safetySettings: SAFETY_SETTINGS,
-    },
-  });
+  try {
+    const response = await fetch(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.4,
+          topP: 0.9,
+          maxOutputTokens: 1024,
+          responseMimeType: "application/json",
+        },
+        safetySettings: SAFETY_SETTINGS,
+      }),
+    });
 
-  // Raw log so we can see the full Gemini response in Vercel logs if something goes wrong
-  console.log("Raw Gemini response:", JSON.stringify(result));
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Gemini HTTP error:", response.status, errorText);
+      throw new Error(`Gemini API returned ${response.status}: ${errorText}`);
+    }
 
-  // Validate that Gemini returned actual content and wasn't blocked
-  const candidates = result.candidates;
-  if (!candidates || candidates.length === 0) {
-    throw new Error("Gemini returned no candidates — response may have been blocked.");
+    const data = await response.json() as {
+      candidates?: Array<{
+        content?: { parts?: Array<{ text?: string }> };
+        finishReason?: string;
+      }>;
+    };
+
+    console.log("Raw Gemini response:", JSON.stringify(data));
+
+    const candidate = data.candidates?.[0];
+
+    if (!candidate) {
+      throw new Error("Gemini returned no candidates — may have been blocked.");
+    }
+
+    if (candidate.finishReason === "SAFETY" || candidate.finishReason === "RECITATION") {
+      throw new Error(`BLOCKED:${candidate.finishReason}`);
+    }
+
+    const rawText = candidate.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+
+    if (!rawText.trim()) {
+      throw new Error("Gemini returned empty content.");
+    }
+
+    return rawText;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const firstCandidate = candidates[0];
-  const finishReason = firstCandidate.finishReason;
-
-  // If Gemini stopped due to safety filters, return a friendly message
-  if (finishReason === "SAFETY" || finishReason === "RECITATION") {
-    throw new Error(`BLOCKED:${finishReason}`);
-  }
-
-  const rawText = result.text ?? "";
-
-  if (!rawText.trim()) {
-    throw new Error("Gemini returned an empty response.");
-  }
-
-  return rawText;
 }
 
 export async function POST(req: NextRequest) {
@@ -165,22 +182,22 @@ export async function POST(req: NextRequest) {
 
     if (message.includes("Missing GEMINI_API_KEY")) {
       return NextResponse.json(
-        { error: "API key not configured. Please set GEMINI_API_KEY in your environment variables." },
+        { error: "API key not configured. Please set GEMINI_API_KEY in your Vercel environment variables." },
         { status: 500 }
       );
     }
 
     if (message.startsWith("BLOCKED:")) {
       return NextResponse.json(
-        { error: "The AI declined to answer this specific dilemma. Try rephrasing it!" },
+        { error: "The AI declined to answer this dilemma. Try rephrasing it!" },
         { status: 422 }
       );
     }
 
-    if (message.includes("no candidates")) {
+    if (message.includes("aborted") || message.includes("abort")) {
       return NextResponse.json(
-        { error: "The AI declined to answer this specific dilemma. Try rephrasing it!" },
-        { status: 422 }
+        { error: "The request timed out. Please try again." },
+        { status: 504 }
       );
     }
 
