@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { GoogleGenAI } from "@google/genai";
 
 type Mode = "logical" | "emotional" | "brutal";
 
@@ -18,8 +19,7 @@ const MODE_BEHAVIOR: Record<Mode, string> = {
   brutal: "Use concise, direct, blunt reasoning.",
 };
 
-const GEMINI_MODEL = "gemini-1.5-flash";
-const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+const GEMINI_MODEL = "gemini-2.5-flash";
 
 const FALLBACK_RESPONSE: DecisionResult = {
   pros: ["Unable to analyze at this time."],
@@ -34,16 +34,6 @@ export const maxDuration = 10;
 
 function methodNotAllowed() {
   return NextResponse.json({ error: "Method not allowed." }, { status: 405 });
-}
-
-function createTimeoutSignal(timeoutMs: number) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  return {
-    signal: controller.signal,
-    clear: () => clearTimeout(timeoutId),
-  };
 }
 
 function buildPrompt(dilemma: string, mode: Mode) {
@@ -92,54 +82,26 @@ async function callGemini(prompt: string) {
     throw new Error("Missing GEMINI_API_KEY.");
   }
 
-  const { signal, clear } = createTimeoutSignal(9000);
+  const ai = new GoogleGenAI({ apiKey });
 
-  try {
-    const response = await fetch(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      signal,
-      body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: prompt }],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.4,
-          topP: 0.9,
-          maxOutputTokens: 256,
-          responseMimeType: "application/json",
-        },
-      }),
-    });
+  const response = await ai.models.generateContent({
+    model: GEMINI_MODEL,
+    contents: prompt,
+    config: {
+      temperature: 0.4,
+      topP: 0.9,
+      maxOutputTokens: 512,
+      responseMimeType: "application/json",
+    },
+  });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Gemini request failed with ${response.status}: ${errorText}`);
-    }
+  const rawText = response.text ?? "";
 
-    const data = (await response.json()) as {
-      candidates?: Array<{
-        content?: {
-          parts?: Array<{ text?: string }>;
-        };
-      }>;
-    };
-
-    const rawText = data.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("") ?? "";
-
-    if (!rawText) {
-      throw new Error("Gemini returned an empty response.");
-    }
-
-    return rawText;
-  } finally {
-    clear();
+  if (!rawText) {
+    throw new Error("Gemini returned an empty response.");
   }
+
+  return rawText;
 }
 
 export async function POST(req: NextRequest) {
@@ -170,17 +132,9 @@ export async function POST(req: NextRequest) {
   try {
     const rawText = await callGemini(prompt);
     const parsed = parseDecisionResult(rawText);
-
     return NextResponse.json(parsed, { status: 200 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-
-    if (message.includes("aborted")) {
-      return NextResponse.json(
-        { error: "The request took too long. Please shorten the dilemma and try again." },
-        { status: 504 }
-      );
-    }
 
     if (message.includes("Missing GEMINI_API_KEY")) {
       return NextResponse.json(
