@@ -114,6 +114,12 @@ async function callGemini(prompt: string) {
     if (!response.ok) {
       const errorText = await response.text();
       console.error("Gemini HTTP error:", response.status, errorText);
+      if (response.status === 429) {
+        throw new Error("QUOTA_EXCEEDED");
+      }
+      if (response.status === 400) {
+        throw new Error("INVALID_REQUEST: Bad request to Gemini API. Check your API key.");
+      }
       throw new Error(`Gemini API returned ${response.status}: ${errorText}`);
     }
 
@@ -182,6 +188,13 @@ export async function POST(req: NextRequest) {
 
     if (message.includes("INVALID_KEY")) {
       return NextResponse.json({ error: message }, { status: 500 });
+    }
+
+    if (message.includes("QUOTA_EXCEEDED")) {
+      return NextResponse.json(
+        { error: "Gemini API free quota exceeded. Please wait a minute and try again, or upgrade your Google AI plan at aistudio.google.com." },
+        { status: 429 }
+      );
     }
 
     if (message.startsWith("BLOCKED:")) {
