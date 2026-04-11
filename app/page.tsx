@@ -36,23 +36,29 @@ const MODES: ModeOption[] = [
     label: "Logical",
     icon: <Brain className="w-4 h-4" />,
     description: "Data-driven, rational analysis",
-    activeClass: "border-blue-500 bg-blue-500/10 text-blue-400",
+    activeClass: "border-blue-500 bg-blue-500/10 text-blue-600",
   },
   {
     value: "emotional",
     label: "Emotional",
     icon: <Heart className="w-4 h-4" />,
     description: "Empathy-first, feeling-aware",
-    activeClass: "border-pink-500 bg-pink-500/10 text-pink-400",
+    activeClass: "border-pink-500 bg-pink-500/10 text-pink-600",
   },
   {
     value: "brutal",
     label: "Brutal",
     icon: <Flame className="w-4 h-4" />,
     description: "No filter, raw honesty",
-    activeClass: "border-orange-500 bg-orange-500/10 text-orange-400",
+    activeClass: "border-orange-500 bg-orange-500/10 text-orange-600",
   },
 ];
+
+const MODE_BG: Record<Mode, string> = {
+  logical: "bg-slate-50",
+  emotional: "bg-orange-50",
+  brutal: "bg-red-50",
+};
 
 // ─── Typing Effect Hook ───────────────────────────────────────────────────────
 
@@ -239,7 +245,10 @@ export default function AIDecisionEngine() {
 
   return (
     <div className={darkMode ? "dark" : ""}>
-      <main className="min-h-screen bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 transition-colors duration-300">
+      <main className={cn(
+        "min-h-screen text-zinc-900 dark:text-zinc-100 transition-colors duration-500",
+        darkMode ? "bg-zinc-950" : MODE_BG[mode]
+      )}>
 
         {/* ── Top Bar ─────────────────────────────────────────────────────── */}
         <header className="flex items-center justify-between px-6 py-4 border-b border-zinc-200 dark:border-zinc-800">
@@ -291,9 +300,11 @@ export default function AIDecisionEngine() {
               }}
               rows={5}
               className={cn(
-                "resize-none text-sm bg-zinc-50 dark:bg-zinc-900",
-                "border-zinc-200 dark:border-zinc-800",
-                "focus:ring-2 focus:ring-zinc-500 focus:border-transparent",
+                "resize-none text-sm",
+                "bg-white/70 dark:bg-zinc-900/70 backdrop-blur-sm",
+                "border border-white/50 dark:border-zinc-700/50",
+                "shadow-sm",
+                "focus:ring-2 focus:ring-zinc-400 focus:border-transparent",
                 "placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
               )}
             />
@@ -313,12 +324,13 @@ export default function AIDecisionEngine() {
                   key={m.value}
                   onClick={() => setMode(m.value)}
                   className={cn(
-                    "flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all duration-200",
+                    "flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all duration-300",
                     "text-sm font-medium",
+                    "backdrop-blur-sm",
                     "hover:border-zinc-400 dark:hover:border-zinc-600",
                     mode === m.value
-                      ? m.activeClass
-                      : "border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400"
+                      ? cn(m.activeClass, "shadow-md")
+                      : "border-white/60 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 text-zinc-500 dark:text-zinc-400"
                   )}
                 >
                   {m.icon}

@@ -18,7 +18,7 @@ const MODE_BEHAVIOR: Record<Mode, string> = {
   brutal: "Use concise, direct, blunt reasoning.",
 };
 
-const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_MODEL = "gemini-1.5-flash";
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
 const FALLBACK_RESPONSE: DecisionResult = {
@@ -179,6 +179,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: "The request took too long. Please shorten the dilemma and try again." },
         { status: 504 }
+      );
+    }
+
+    if (message.includes("Missing GEMINI_API_KEY")) {
+      return NextResponse.json(
+        { error: "API key not configured. Please set GEMINI_API_KEY in your environment variables." },
+        { status: 500 }
       );
     }
 
